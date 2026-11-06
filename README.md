@@ -1,6 +1,11 @@
 # dsh-translate-pin
 
+[![Platform](https://img.shields.io/badge/platform-Windows-0078d4)](#环境要求)
+[![License](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
+
 **DSH 划词翻译 + 截图翻译：选中即译，框选屏幕任意区域 OCR 后把译文直接贴回原区域。**
+
+Selection and screenshot translation for DeepSeek Harness (Windows): DeepSeek vision reads the captured screenshot and the Chinese translation replaces the original area in place, so the page looks like it was written in Chinese.
 
 - **划词翻译**：在 DSH 里用鼠标选中外文，选区旁浮出「译」按钮，点一下就地出译文卡片。
 - **截图翻译**：框选屏幕上任意区域后，直接把截图交给 **DeepSeek 读图翻译**，再把原文区域抹成该处底色、把译文画回原位置；**引用框/卡片的底色、边框、留白都会保留**，看起来就像这一段原文被直接替换。
