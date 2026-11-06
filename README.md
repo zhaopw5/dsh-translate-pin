@@ -129,19 +129,17 @@ dsh plugin --profile <profile> add <本目录>
 
 ## 配置
 
-在 profile patch 的行里加 `config`：
+bundle 安装后，在 profile patch 里按行 id 覆盖配置（不要重复 insert）：
 
 ```yaml
-- insert:
-    - id: translate-pin
-      name: 'file:///C:/.../dsh-translate-pin/lib/index.js'
-      config:
-        targetLanguage: zh-Hans   # 默认简体中文；可填 en / ja / zh-Hant ...
+- id: translate-pin
+  config:
+    targetLanguage: zh-Hans   # 默认简体中文；可填 en / ja / zh-Hant ...
 ```
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `targetLanguage` | `zh-Hans` | Bing/Google 的 BCP-47 目标语言码 |
+| `targetLanguage` | `zh-Hans` | 目标语言码（DeepSeek 提示词与 Bing/Google 回退共用） |
 
 改完 `targetLanguage` 后，已打开的页面需要刷新，host 行会随 HMR 重载。
 
@@ -162,7 +160,7 @@ dsh-translate-pin/
 
 - **通信**：客户端走 `POST /api/translate-pin/*` 精确 Fetch 路由，复用 DSH 的 `/api` Cookie 鉴权；桌面端由 `dsh-app://app` 协议转发到本机 Host，不额外开放端口。
 - **桌面工具**：`pinwin.py` 子进程在 Host 启动时拉起并常驻，负责浮标、`RegisterHotKey` 全局快捷键、框选和原地译文窗；Host 与它用 stdin/stdout 逐行 JSON 通信。
-- **截图链路**：浮标/快捷键 → 框选 → Host OCR → Host 翻译 → 回传 rect 与译文 → 原地窗盖在原区域。
+- **截图链路**：浮标/快捷键 → 框选确认 → Host 读图翻译（DeepSeek）→ 回传 rect 与译文 → 原地窗盖在原区域。
 - **翻译**：优先用 `ctx.llm` 调用 DSH 当前配置的 DeepSeek 模型（默认 `deepseek-flash`，支持图片输入），让模型直接读截图、并在翻译时纠正 OCR 错字；模型不可用才回退 Bing / Google / MyMemory。
 - **OCR**：只用于获取原文的**行框位置**（布局用）；截图翻译的正文以模型读图结果为准，避免 Windows OCR 把小字/符号读错后带进译文。
 
@@ -174,7 +172,7 @@ dsh-translate-pin/
 
 | 现象 | 排查 |
 |---|---|
-| 右下角没有「截图翻译」 | 没重启客户端；或 profile 行没写对（路径不是 `file:///`）；看控制台是否有 `dsh-translate-pin` 报错 |
+| 右下角没有「截图翻译」 | 没重启客户端；或插件没作为 bundle 启用（「插件」页里确认 dsh-translate-pin 是开启状态）；看控制台是否有 `dsh-translate-pin` 报错 |
 | 点截图没反应 | 日志里找 `spawning pin helper` / `pin stderr`；确认 Python 有 tkinter + Pillow |
 | OCR 报 `no Windows OCR engine available` | 安装中文(简体) OCR 语言包 |
 | 翻译失败 | 日志 `rpc/translate`；Bing 需要能直连 `edge.microsoft.com`；公司代理环境可在 `$DSH_HOME/.dsh-translate.json` 之外自行配置系统代理 |
@@ -187,7 +185,7 @@ dsh-translate-pin/
 
 - **只支持 Windows**：OCR 依赖 `Windows.Media.Ocr`，浮标/全局快捷键依赖 Win32。
 - **DSH 完全退出后桌面浮标也会退出**：它是 DSH 宿主进程的子进程；最小化、切到别的窗口都不影响。若需要 DSH 关掉也常驻，可以把 `pinwin.py` 配成开机启动的独立进程（目前未提供）。
-- **OCR 精度受引擎限制**：Windows 内置识别对 12px 以下的界面小字、复杂排版会掉字；文章正文/字幕效果更好。需要更高精度可后续接视觉模型或 PaddleOCR。
+- **OCR 只负责定位行框**：正文由 DeepSeek 读图翻译；模型不可用时才回退 Windows OCR 文本，精度会明显下降。
 - **划词只在 DSH 页面内生效**：它监听的是页面选区，不是系统级全局划词；系统级入口是截图翻译（浮标 / `Ctrl+Shift+S`）。
 - **原地译文窗会盖住原截图区域**：这是设计目标；需要对照原文时点窗内「原文」。
 - **桌面端必须重启一次**：客户端的模块清单在启动时注入，热加载只覆盖 host 行。
@@ -195,7 +193,7 @@ dsh-translate-pin/
 
 ## 卸载
 
-1. 从 `cordis.patch.yml` 删除 `translate-pin` 块；
+1. 在 DSH「插件」页卸载 `dsh-translate-pin`（或 `dsh plugin --profile <profile> remove dsh-translate-pin`）；
 2. 重启客户端；
 3. 可选：删除本目录与 `%USERPROFILE%\.dsh\translate-pin` 日志目录。
 
