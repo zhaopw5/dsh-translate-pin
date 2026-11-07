@@ -792,33 +792,23 @@ class InPlaceWindow:
         return tuple(int(sum(p[i] for p in group) / len(group)) for i in range(3))
 
     def _line_style(self, rect, width, height):
-        """按每一行原始文字采样：底色、文字颜色、是否加粗。"""
+        """按每一行原始文字采样：底色与文字主色。"""
         x0, y0, x1, y1 = rect
         inner = self.crop.crop((x0, y0, x1, y1))
         try:
             pixels = list(inner.get_flattened_data())
         except Exception:
             pixels = list(inner.getdata())
-        ox0 = max(0, x0 - 4)
-        oy0 = max(0, y0 - 4)
-        ox1 = min(width, x1 + 4)
-        oy1 = min(height, y1 + 4)
-        ring = []
-        for x in range(ox0, ox1):
-            ring.append(self.crop.getpixel((x, oy0)))
-            ring.append(self.crop.getpixel((x, oy1 - 1)))
-        for y in range(oy0, oy1):
-            ring.append(self.crop.getpixel((ox0, y)))
-            ring.append(self.crop.getpixel((ox1 - 1, y)))
-        bg = self._dominant(ring, self.bg)
         if not pixels:
-            return {"bg": bg, "fg": self.fg, "bold": False}
+            return {"bg": self.bg, "fg": self.fg, "bold": False}
+        # 一行里大多数像素是背景色；取出现最多的颜色，避免把左侧竖线/页面底色混进来。
+        bg = self._dominant(pixels, self.bg)
         mask = [p for p in pixels if self._dist(p, bg) > 70]
         if not mask:
             return {"bg": bg, "fg": self.fg, "bold": False}
-        mask.sort(key=lambda p: self._dist(p, bg), reverse=True)
-        take = mask[:max(1, int(len(mask) * 0.35))]
-        fg = tuple(int(sum(p[i] for p in take) / len(take)) for i in range(3))
+        # 文字主色取“与底色差异最大的一批像素”里出现最多的颜色，避免被个别红字/抗锯齿边缘带偏。
+        strong = [p for p in mask if self._dist(p, bg) > 140]
+        fg = self._dominant(strong or mask, self.fg)
         w = x1 - x0
         xs, ys = [], []
         for index, pixel in enumerate(pixels):
