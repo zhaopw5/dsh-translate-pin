@@ -516,10 +516,16 @@ class InPlaceWindow:
 
         self.bg, self.fg = self._sample_colors(self.crop)
         raw_lines = payload.get("lines") or []
+        raw_blocks = payload.get("blocks") or []
+        block_mode = bool(raw_blocks) and any(
+            isinstance(item, dict) and str(item.get("translated") or "").strip()
+            for item in raw_blocks)
         line_mode = bool(raw_lines) and any(
             isinstance(item, dict) and str(item.get("translated") or "").strip()
             for item in raw_lines)
-        if line_mode:
+        if block_mode:
+            base, original_img = self._compose_blocks(raw_blocks, w, h)
+        elif line_mode:
             base, original_img = self._compose_lines(raw_lines, w, h)
         else:
             line_rects = self._line_rects(raw_lines, w, h)
@@ -929,6 +935,78 @@ class InPlaceWindow:
             painter.text((x, y), line, font=font, fill=style["fg"])
 
         return base, self.crop.copy(), base.height
+
+    def _compose_blocks(self, blocks, width, height):
+        """按段落块翻译：整段文字在块内重新排版，但整块落在原文段落所在的矩形里。"""
+        base = self.crop.copy()
+        painter = ImageDraw.Draw(base)
+        font_path = self._font_path("中文")
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            text = str(block.get("translated") or "").strip()
+            lines = [item for item in (block.get("lines") or []) if isinstance(item, dict)]
+            rect = block.get("rect") or {}
+            if not text or not lines:
+                continue
+            try:
+                bx = int(rect.get("x", 0))
+                by = int(rect.get("y", 0))
+                bw = int(rect.get("w", 0))
+                bh = int(rect.get("h", 0))
+            except Exception:
+                continue
+            if bw < 20 or bh < 10:
+                continue
+            style = self._line_style(
+                (max(0, bx), max(0, by), min(width, bx + bw), min(height, by + bh)),
+                width, height)
+            # 只抹掉这个块里每一行文字，保留引用框的底色/竖线/边框。
+            for item in lines:
+                try:
+                    x0 = int(item.get("x", 0))
+                    y0 = int(item.get("y", 0))
+                    lw = int(item.get("w", 0))
+                    lh = int(item.get("h", 0))
+                except Exception:
+                    continue
+                if lw <= 0 or lh <= 0:
+                    continue
+                painter.rectangle(
+                    [max(0, x0 - 3), max(0, y0 - 3),
+                     min(width - 1, x0 + lw + 2), min(height - 1, y0 + lh + 2)],
+                    fill=style["bg"])
+            block_w = max(20, bw)
+            block_h = max(10, bh)
+            chosen = None
+            for size in range(max(7, min(40, int(block_h * 0.92))), 6, -1):
+                try:
+                    font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
+                except Exception:
+                    font = ImageFont.load_default()
+                spacing = max(2, int(size * 0.35))
+                wrapped = self._wrap(painter, text, font, block_w)
+                total = len(wrapped) * size + (len(wrapped) - 1) * spacing
+                widest = max(painter.textlength(line, font=font) for line in wrapped)
+                if total <= block_h - 2 and widest <= block_w:
+                    chosen = (size, font, wrapped, spacing)
+                    break
+            if chosen is None:
+                size = 7
+                try:
+                    font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
+                except Exception:
+                    font = ImageFont.load_default()
+                spacing = 0
+                wrapped = self._wrap(painter, text, font, block_w)
+                chosen = (size, font, wrapped, spacing)
+            size, font, wrapped, spacing = chosen
+            total = len(wrapped) * size + max(0, len(wrapped) - 1) * spacing
+            y = by + max(0, (block_h - total) // 2)
+            for line in wrapped:
+                painter.text((bx, y), line, font=font, fill=style["fg"])
+                y += size + spacing
+        return base, self.crop.copy()
 
     def _compose_lines(self, lines, width, height):
         """逐行替换：每条 OCR 行用自己的译文画回原来的行框，保证位置贴着原文。"""

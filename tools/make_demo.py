@@ -34,14 +34,13 @@ obj = object.__new__(pinwin.InPlaceWindow)
 obj.crop = before
 obj.bg = BG
 obj.fg = FG
-zh_lines = [
-    "由于传感器被用于选择和校正",
-    "不一致的通道，因此与它更接近",
-    "的一致性并非独立检验。",
-]
-lines = []
-for (x0, y0, x1, y1), zh in zip(rects, zh_lines):
-    lines.append({"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0, "translated": zh})
-after, _ = obj._compose_lines(lines, W, H)
+zh = "由于传感器被用于选择和校正不一致的通道，因此与传感器更接近的一致性并非独立检验。"
+block = {
+    "rect": {"x": 22, "y": 22, "w": 800, "h": 128},
+    "lines": [{"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0} for x0, y0, x1, y1 in rects],
+    "translated": zh,
+}
+after, _ = obj._compose_blocks([block], W, H)
 after.save("docs/demo-after.png")
 print("before", before.size, "after", after.size)
+
