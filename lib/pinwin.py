@@ -517,13 +517,19 @@ class InPlaceWindow:
         self.bg, self.fg = self._sample_colors(self.crop)
         raw_lines = payload.get("lines") or []
         raw_blocks = payload.get("blocks") or []
+        raw_table = (payload.get("table") or {}).get("cells") or []
+        table_mode = bool(raw_table) and any(
+            isinstance(item, dict) and str(item.get("translated") or "").strip()
+            for item in raw_table)
         block_mode = bool(raw_blocks) and any(
             isinstance(item, dict) and str(item.get("translated") or "").strip()
             for item in raw_blocks)
         line_mode = bool(raw_lines) and any(
             isinstance(item, dict) and str(item.get("translated") or "").strip()
             for item in raw_lines)
-        if block_mode:
+        if table_mode:
+            base, original_img = self._compose_table(raw_table, w, h)
+        elif block_mode:
             base, original_img = self._compose_blocks(raw_blocks, w, h)
         elif line_mode:
             base, original_img = self._compose_lines(raw_lines, w, h)
@@ -935,6 +941,63 @@ class InPlaceWindow:
             painter.text((x, y), line, font=font, fill=style["fg"])
 
         return base, self.crop.copy(), base.height
+
+    def _compose_table(self, cells, width, height):
+        """表格：逐单元格替换，保留表格线、数字和列位置。"""
+        base = self.crop.copy()
+        painter = ImageDraw.Draw(base)
+        font_path = self._font_path("中文")
+        # 表格整体用一个文字颜色，避免小字号单元格采到 ClearType 彩边（粉色/紫色）。
+        valid = [cell for cell in cells if isinstance(cell, dict)]
+        if not valid:
+            return base, self.crop.copy()
+        tx0 = min(max(0, int(cell.get("x", 0))) for cell in valid)
+        ty0 = min(max(0, int(cell.get("y", 0))) for cell in valid)
+        tx1 = max(min(width, int(cell.get("x", 0)) + int(cell.get("w", 0))) for cell in valid)
+        ty1 = max(min(height, int(cell.get("y", 0)) + int(cell.get("h", 0))) for cell in valid)
+        table_style = self._line_style((tx0, ty0, max(tx0 + 1, tx1), max(ty0 + 1, ty1)),
+                                       width, height)
+        table_fg = table_style["fg"]
+        for cell in cells:
+            if not isinstance(cell, dict):
+                continue
+            text = str(cell.get("translated") or "").strip()
+            if not text:
+                continue
+            try:
+                x = int(cell.get("x", 0))
+                y = int(cell.get("y", 0))
+                cw = int(cell.get("w", 0))
+                ch = int(cell.get("h", 0))
+            except Exception:
+                continue
+            if cw < 4 or ch < 6:
+                continue
+            x0 = max(0, min(width - 1, x))
+            y0 = max(0, min(height - 1, y))
+            x1 = max(x0 + 1, min(width, x + cw))
+            y1 = max(y0 + 1, min(height, y + ch))
+            style = self._line_style((x0, y0, x1, y1), width, height)
+            painter.rectangle(
+                [max(0, x0 - 2), max(0, y0 - 2),
+                 min(width - 1, x1 + 2), min(height - 1, y1 + 2)],
+                fill=style["bg"])
+            size = max(6, int((y1 - y0) * 0.9))
+            try:
+                font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
+            except Exception:
+                font = ImageFont.load_default()
+            while size > 6 and painter.textlength(text, font=font) > (x1 - x0):
+                size -= 1
+                try:
+                    font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
+                except Exception:
+                    font = ImageFont.load_default()
+            text_w = painter.textlength(text, font=font)
+            tx = (x1 - text_w) if cell.get("numeric") else x0
+            ty = y0 + max(0, (y1 - y0 - size) // 2)
+            painter.text((tx, ty), text, font=font, fill=table_fg)
+        return base, self.crop.copy()
 
     def _compose_blocks(self, blocks, width, height):
         """按段落块翻译：整段文字在块内重新排版，但整块落在原文段落所在的矩形里。"""

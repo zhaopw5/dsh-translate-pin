@@ -131,6 +131,26 @@ function Get-LineBoxes($result, [double]$scale) {
   return $list
 }
 
+function Get-WordBoxes($result, [double]$scale) {
+  $list = @()
+  if ($null -eq $result -or $null -eq $result.Lines) { return $list }
+  foreach ($line in $result.Lines) {
+    if ($null -eq $line.Words) { continue }
+    foreach ($word in $line.Words) {
+      $r = $word.BoundingRect
+      if ($null -eq $r) { continue }
+      $list += @{
+        text = [string]$word.Text
+        x = [int][Math]::Floor($r.X / $scale)
+        y = [int][Math]::Floor($r.Y / $scale)
+        w = [int][Math]::Ceiling($r.Width / $scale)
+        h = [int][Math]::Ceiling($r.Height / $scale)
+      }
+    }
+  }
+  return $list
+}
+
 function Invoke-Ocr([string]$imagePath) {
   $prepared = Prepare-Image $imagePath
   try {
@@ -150,16 +170,18 @@ function Invoke-Ocr([string]$imagePath) {
   $chosen = if ($useZh) { $resZh } else { $resEn }
   $text = if ($useZh) { $textZh } else { $textEn }
   $lines = Get-LineBoxes $chosen $prepared.scale
+  $words = Get-WordBoxes $chosen $prepared.scale
   return @{
     text = $text
     lang = $(if ($useZh) { 'zh' } else { 'en' })
     width = $prepared.width
     height = $prepared.height
     lines = $lines
+    words = $words
   }
 }
 
-function Write-Result([string]$text, [string]$lang, $lines, [int]$width, [int]$height) {
+function Write-Result([string]$text, [string]$lang, $lines, $words, [int]$width, [int]$height) {
   $name = [guid]::NewGuid().ToString('N') + '.json'
   $out = Join-Path $script:tmpDir $name
   $payload = @{
@@ -169,6 +191,7 @@ function Write-Result([string]$text, [string]$lang, $lines, [int]$width, [int]$h
     width = $width
     height = $height
     lines = $lines
+    words = $words
   } | ConvertTo-Json -Compress -Depth 5
   [System.IO.File]::WriteAllText($out, $payload, (New-Object System.Text.UTF8Encoding $false))
   return $out
@@ -181,7 +204,7 @@ function Handle-Path([string]$imagePath) {
       return
     }
     $result = Invoke-Ocr $imagePath
-    $out = Write-Result $result.text $result.lang $result.lines $result.width $result.height
+    $out = Write-Result $result.text $result.lang $result.lines $result.words $result.width $result.height
     [Console]::Out.WriteLine('OK ' + $out)
   } catch {
     [Console]::Out.WriteLine('ERR ' + $_.Exception.Message + ' @line ' + $_.InvocationInfo.ScriptLineNumber)
