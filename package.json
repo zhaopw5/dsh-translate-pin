@@ -1,6 +1,6 @@
 {
   "name": "dsh-translate-pin",
-  "version": "0.3.6",
+  "version": "0.4.0",
   "description": "DSH 划词翻译 + 截图翻译：选中即译、框选截图后由 DeepSeek 读图翻译，译文直接替换原区域，结果可钉在桌面置顶。",
   "type": "module",
   "main": "lib/index.js",
@@ -49,6 +49,7 @@
     "url": "https://github.com/zhaopw5/dsh-translate-pin/issues"
   }
 }
+
 
 
 

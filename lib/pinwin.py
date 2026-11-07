@@ -515,24 +515,29 @@ class InPlaceWindow:
         w, h = self.crop.size
 
         self.bg, self.fg = self._sample_colors(self.crop)
-        line_rects = self._line_rects(payload.get("lines") or [], w, h)
-        boxes = self._text_boxes(payload.get("lines") or [], w, h)
-        bx0, by0, bx1, by1 = boxes
-
-        translated = (payload.get("translated") or "").strip()
-        original_text = (payload.get("original") or "").strip()
-        font_path = self._font_path(translated or original_text)
-        line_heights = [int(item.get("h", 0)) for item in (payload.get("lines") or [])
-                        if isinstance(item, dict) and int(item.get("h", 0)) > 0]
-        if line_heights:
-            line_heights.sort()
-            base = line_heights[len(line_heights) // 2]
+        raw_lines = payload.get("lines") or []
+        line_mode = bool(raw_lines) and all(
+            isinstance(item, dict) and str(item.get("translated") or "").strip()
+            for item in raw_lines)
+        if line_mode:
+            base, original_img = self._compose_lines(raw_lines, w, h)
         else:
-            base = max(12, (by1 - by0) // 3)
-        start_size = max(10, min(40, int(base * 1.08)))
-
-        base, original_img, _ = self._compose(
-            translated, original_text, boxes, line_rects, font_path, start_size, w, h)
+            line_rects = self._line_rects(raw_lines, w, h)
+            boxes = self._text_boxes(raw_lines, w, h)
+            bx0, by0, bx1, by1 = boxes
+            translated = (payload.get("translated") or "").strip()
+            original_text = (payload.get("original") or "").strip()
+            font_path = self._font_path(translated or original_text)
+            line_heights = [int(item.get("h", 0)) for item in raw_lines
+                            if isinstance(item, dict) and int(item.get("h", 0)) > 0]
+            if line_heights:
+                line_heights.sort()
+                base_size = line_heights[len(line_heights) // 2]
+            else:
+                base_size = max(12, (by1 - by0) // 3)
+            start_size = max(10, min(40, int(base_size * 1.08)))
+            base, original_img, _ = self._compose(
+                translated, original_text, boxes, line_rects, font_path, start_size, w, h)
         self.image_translated = self._decorate(base)
         self.image_original = self._decorate(original_img)
         self.window_w, self.window_h = self.image_translated.size
@@ -924,6 +929,48 @@ class InPlaceWindow:
             painter.text((x, y), line, font=font, fill=style["fg"])
 
         return base, self.crop.copy(), base.height
+
+    def _compose_lines(self, lines, width, height):
+        """逐行替换：每条 OCR 行用自己的译文画回原来的行框，保证位置贴着原文。"""
+        base = self.crop.copy()
+        painter = ImageDraw.Draw(base)
+        font_path = self._font_path("中文")
+        for item in lines:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("translated") or "").strip()
+            try:
+                x = int(item.get("x", 0))
+                y = int(item.get("y", 0))
+                lw = int(item.get("w", 0))
+                lh = int(item.get("h", 0))
+            except Exception:
+                continue
+            if not text or lw < 4 or lh < 6:
+                continue
+            x0 = max(0, min(width - 1, x))
+            y0 = max(0, min(height - 1, y))
+            x1 = max(x0 + 1, min(width, x + lw))
+            y1 = max(y0 + 1, min(height, y + lh))
+            style = self._line_style((x0, y0, x1, y1), width, height)
+            painter.rectangle(
+                [max(0, x0 - 3), max(0, y0 - 3),
+                 min(width - 1, x1 + 2), min(height - 1, y1 + 2)],
+                fill=style["bg"])
+            size = max(6, int((y1 - y0) * 0.9))
+            try:
+                font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
+            except Exception:
+                font = ImageFont.load_default()
+            while size > 6 and painter.textlength(text, font=font) > (x1 - x0):
+                size -= 1
+                try:
+                    font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
+                except Exception:
+                    font = ImageFont.load_default()
+            draw_y = y0 + max(0, (y1 - y0 - size) // 2)
+            painter.text((x0, draw_y), text, font=font, fill=style["fg"])
+        return base, self.crop.copy()
 
     # ---------------------------------------------------------- 交互
     def _hover(self, inside):
