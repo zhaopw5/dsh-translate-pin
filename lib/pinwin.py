@@ -860,35 +860,56 @@ class InPlaceWindow:
                  min(width - 1, x1 + 2), min(height - 1, y1 + 2)],
                 fill=style["bg"])
 
+        rects.sort(key=lambda r: r[1])
+        block_left = min(r[0] for r in rects)
+        block_right = max(r[2] for r in rects)
+        block_top = min(r[1] for r in rects)
+        block_bottom = max(r[3] for r in rects)
+        block_w = max(40, block_right - block_left)
+        block_h = max(12, block_bottom - block_top)
         heights = sorted(r[3] - r[1] for r in rects)
         base_h = heights[len(heights) // 2]
-        size = max(10, min(40, int(base_h * 1.02)))
-        block_w = max(r[2] - r[0] for r in rects) + 10
+        pitch = block_h / max(1, len(rects) - 1)
+        limit = int(min(base_h * 0.95, pitch * 0.85 if len(rects) > 1 else block_h * 0.85))
+        limit = max(7, min(40, limit))
         bold_path = None
         if font_path:
             candidate = font_path.replace("msyh.ttc", "msyhbd.ttc")
             if os.path.exists(candidate):
                 bold_path = candidate
-        try:
-            font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
-        except Exception:
-            font = ImageFont.load_default()
-        spacing = max(1, int(size * 0.24))
-        wrapped = self._wrap(painter, translated, font, block_w) if translated else []
 
-        total_h = len(wrapped) * (size + spacing) + 4 if wrapped else 0
-        extra = max(0, rects[0][1] + total_h - height)
-        if extra:
-            grown = Image.new("RGB", (width, height + extra), styles[-1]["bg"])
-            grown.paste(base, (0, 0))
-            base = grown
-            painter = ImageDraw.Draw(base)
+        chosen = None
+        for size in range(limit, 6, -1):
+            try:
+                font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
+            except Exception:
+                font = ImageFont.load_default()
+            spacing = max(1, int(size * 0.18))
+            wrapped = self._wrap(painter, translated, font, block_w) if translated else []
+            if not wrapped:
+                chosen = (size, font, [], spacing)
+                break
+            total = len(wrapped) * size + (len(wrapped) - 1) * spacing
+            widest = max(painter.textlength(line, font=font) for line in wrapped)
+            if total <= block_h - 2 and widest <= block_w:
+                chosen = (size, font, wrapped, spacing)
+                break
+        if chosen is None:
+            size = 7
+            try:
+                font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
+            except Exception:
+                font = ImageFont.load_default()
+            spacing = 0
+            wrapped = self._wrap(painter, translated, font, block_w) if translated else []
+            chosen = (size, font, wrapped, spacing)
+        size, font, wrapped, spacing = chosen
 
         for j, line in enumerate(wrapped):
             k = min(j, len(rects) - 1)
             style = styles[k]
-            x = rects[k][0]
-            y = rects[0][1] + j * (size + spacing)
+            x = block_left
+            y = block_top + j * (size + spacing)
             use_font = font
             if style.get("bold") and bold_path:
                 try:
