@@ -962,6 +962,9 @@ class InPlaceWindow:
             if not isinstance(cell, dict):
                 continue
             text = str(cell.get("translated") or "").strip()
+            if cell.get("numeric"):
+                # OCR 有时会在数字前后带上引号/撇号，画之前清掉。
+                text = re.sub(r"^[\s'\"‘’`]+|[\s'\"‘’`]+$", "", text)
             if not text:
                 continue
             try:
