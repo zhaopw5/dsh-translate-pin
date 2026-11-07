@@ -994,7 +994,8 @@ class InPlaceWindow:
                 except Exception:
                     font = ImageFont.load_default()
             text_w = painter.textlength(text, font=font)
-            tx = (x1 - text_w) if cell.get("numeric") else x0
+            right_align = bool(cell.get("numeric")) or cell.get("align") == "right"
+            tx = (x1 - text_w) if right_align else x0
             ty = y0 + max(0, (y1 - y0 - size) // 2)
             painter.text((tx, ty), text, font=font, fill=table_fg)
         return base, self.crop.copy()
