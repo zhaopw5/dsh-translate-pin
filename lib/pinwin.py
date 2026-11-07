@@ -777,69 +777,125 @@ class InPlaceWindow:
         dominant = max(bins.values(), key=len)
         return tuple(int(sum(p[i] for p in dominant) / len(dominant)) for i in range(3))
 
+    @staticmethod
+    def _dist(a, b):
+        return abs(a[0] - b[0]) + abs(a[1] - b[1]) + abs(a[2] - b[2])
+
+    def _dominant(self, pixels, fallback):
+        if not pixels:
+            return fallback
+        bins = {}
+        for pixel in pixels:
+            key = (pixel[0] // 8, pixel[1] // 8, pixel[2] // 8)
+            bins.setdefault(key, []).append(pixel)
+        group = max(bins.values(), key=len)
+        return tuple(int(sum(p[i] for p in group) / len(group)) for i in range(3))
+
+    def _line_style(self, rect, width, height):
+        """按每一行原始文字采样：底色、文字颜色、是否加粗。"""
+        x0, y0, x1, y1 = rect
+        inner = self.crop.crop((x0, y0, x1, y1))
+        try:
+            pixels = list(inner.get_flattened_data())
+        except Exception:
+            pixels = list(inner.getdata())
+        ox0 = max(0, x0 - 4)
+        oy0 = max(0, y0 - 4)
+        ox1 = min(width, x1 + 4)
+        oy1 = min(height, y1 + 4)
+        ring = []
+        for x in range(ox0, ox1):
+            ring.append(self.crop.getpixel((x, oy0)))
+            ring.append(self.crop.getpixel((x, oy1 - 1)))
+        for y in range(oy0, oy1):
+            ring.append(self.crop.getpixel((ox0, y)))
+            ring.append(self.crop.getpixel((ox1 - 1, y)))
+        bg = self._dominant(ring, self.bg)
+        if not pixels:
+            return {"bg": bg, "fg": self.fg, "bold": False}
+        mask = [p for p in pixels if self._dist(p, bg) > 70]
+        if not mask:
+            return {"bg": bg, "fg": self.fg, "bold": False}
+        mask.sort(key=lambda p: self._dist(p, bg), reverse=True)
+        take = mask[:max(1, int(len(mask) * 0.35))]
+        fg = tuple(int(sum(p[i] for p in take) / len(take)) for i in range(3))
+        w = x1 - x0
+        xs, ys = [], []
+        for index, pixel in enumerate(pixels):
+            if self._dist(pixel, bg) > 70:
+                xs.append(index % w)
+                ys.append(index // w)
+        bw = max(xs) - min(xs) + 1
+        bh = max(ys) - min(ys) + 1
+        fill = len(mask) / max(1, bw * bh)
+        return {"bg": bg, "fg": fg, "bold": fill > 0.22}
+
     def _compose(self, translated, original, boxes, line_rects, font_path, start_size, width, height):
-        bx0, by0, bx1, by1 = boxes
-        # 选区紧贴原文边缘时不再保留外边距，直接整块覆盖，避免原文字从边上漏出来。
-        tight = bx0 <= 3 or by0 <= 3 or bx1 >= width - 3 or by1 >= height - 3
-        margin = 0 if tight else 6
+        rects = []
+        for item in (line_rects or []):
+            try:
+                x0, y0, x1, y1 = [int(v) for v in item]
+            except Exception:
+                continue
+            x0 = max(0, min(width - 1, x0))
+            y0 = max(0, min(height - 1, y0))
+            x1 = max(x0 + 1, min(width, x1))
+            y1 = max(y0 + 1, min(height, y1))
+            if x1 - x0 >= 6 and y1 - y0 >= 6:
+                rects.append((x0, y0, x1, y1))
+        if not rects:
+            try:
+                x0, y0, x1, y1 = [int(v) for v in boxes]
+                rects = [(max(0, x0), max(0, y0), min(width, x1), min(height, y1))]
+            except Exception:
+                rects = [(4, 4, max(8, width - 4), max(8, height - 4))]
+        styles = [self._line_style(r, width, height) for r in rects]
+
         base = self.crop.copy()
-
-        if tight:
-            bg_local = self.bg
-        else:
-            # 取内部底色（避开边框/左侧竖线），把文字区域整体抹掉，保留外圈边框与留白。
-            samples = []
-            for y in (margin + 2, max(margin + 2, height - margin - 6)):
-                if 0 <= y < height:
-                    step = max(1, (width - 2 * margin) // 32)
-                    for x in range(margin, width - margin, step):
-                        samples.append(self.crop.getpixel((x, y)))
-            if samples:
-                bins = {}
-                for pixel in samples:
-                    key = (pixel[0] // 8, pixel[1] // 8, pixel[2] // 8)
-                    bins.setdefault(key, []).append(pixel)
-                dominant = max(bins.values(), key=len)
-                bg_local = tuple(int(sum(p[i] for p in dominant) / len(dominant)) for i in range(3))
-            else:
-                bg_local = self.bg
-
         painter = ImageDraw.Draw(base)
-        painter.rectangle([margin, margin, width - margin - 1, height - margin - 1], fill=bg_local)
+        # 只抹掉每一行文字本身，保留引用框的底色、左侧竖线和边框。
+        for (x0, y0, x1, y1), style in zip(rects, styles):
+            painter.rectangle(
+                [max(0, x0 - 3), max(0, y0 - 3),
+                 min(width - 1, x1 + 2), min(height - 1, y1 + 2)],
+                fill=style["bg"])
 
-        text_x = max(margin + 2, int(bx0) + 1)
-        text_y = max(margin + 2, int(by0) + 1)
-        block_w = max(40, width - text_x - margin - 2)
-        block_h = max(16, height - text_y - margin - 2)
+        heights = sorted(r[3] - r[1] for r in rects)
+        base_h = heights[len(heights) // 2]
+        size = max(10, min(40, int(base_h * 1.02)))
+        block_w = max(r[2] - r[0] for r in rects) + 10
+        bold_path = None
+        if font_path:
+            candidate = font_path.replace("msyh.ttc", "msyhbd.ttc")
+            if os.path.exists(candidate):
+                bold_path = candidate
+        try:
+            font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
+        except Exception:
+            font = ImageFont.load_default()
+        spacing = max(1, int(size * 0.24))
+        wrapped = self._wrap(painter, translated, font, block_w) if translated else []
 
-        chosen = None
-        if font_path and translated:
-            for size in range(start_size, 6, -1):
-                try:
-                    font = ImageFont.truetype(font_path, size)
-                except Exception:
-                    break
-                wrapped = self._wrap(painter, translated, font, block_w)
-                spacing = max(1, int(size * 0.22))
-                needed = len(wrapped) * (size + spacing) + 2
-                widest = max((painter.textlength(line, font=font) for line in wrapped), default=0)
-                chosen = (size, font, wrapped, spacing, needed, widest)
-                if needed <= block_h and widest <= block_w:
-                    break
-
-        if chosen:
-            size, font, wrapped, spacing, needed, widest = chosen
-            if needed > block_h:
-                # 实在放不下：只向下加高，保证译文完整。
-                extra = needed - block_h + 6
-                grown = Image.new("RGB", (width, height + extra), bg_local)
-                grown.paste(base, (0, 0))
-                ImageDraw.Draw(grown).rectangle(
-                    [margin, height - margin, width - margin - 1, height + extra - 1], fill=bg_local)
-                base = grown
+        total_h = len(wrapped) * (size + spacing) + 4 if wrapped else 0
+        extra = max(0, rects[0][1] + total_h - height)
+        if extra:
+            grown = Image.new("RGB", (width, height + extra), styles[-1]["bg"])
+            grown.paste(base, (0, 0))
+            base = grown
             painter = ImageDraw.Draw(base)
-            painter.multiline_text((text_x, text_y), "\n".join(wrapped),
-                                   font=font, fill=self.fg, spacing=spacing)
+
+        for j, line in enumerate(wrapped):
+            k = min(j, len(rects) - 1)
+            style = styles[k]
+            x = rects[k][0]
+            y = rects[0][1] + j * (size + spacing)
+            use_font = font
+            if style.get("bold") and bold_path:
+                try:
+                    use_font = ImageFont.truetype(bold_path, size)
+                except Exception:
+                    use_font = font
+            painter.text((x, y), line, font=use_font, fill=style["fg"])
 
         return base, self.crop.copy(), base.height
 
@@ -1110,15 +1166,21 @@ class CaptureOverlay:
         panel.configure(bg="#1b1c21")
         ok = tk.Label(panel, text="✓ 翻译", bg="#1f7a5a", fg="#ffffff",
                       padx=14, pady=5, cursor="hand2", font=(FONT_FAMILY, 9))
+        ask = tk.Label(panel, text="✨ 问 AI", bg="#2a3550", fg="#dbe6ff",
+                       padx=14, pady=5, cursor="hand2", font=(FONT_FAMILY, 9))
         no = tk.Label(panel, text="× 取消", bg="#3a3b42", fg="#e8e9ec",
                       padx=14, pady=5, cursor="hand2", font=(FONT_FAMILY, 9))
         ok.pack(side="left", padx=(0, 6))
+        ask.pack(side="left", padx=(0, 6))
         no.pack(side="left")
         ok.bind("<Enter>", lambda e: ok.configure(bg="#26956d"))
         ok.bind("<Leave>", lambda e: ok.configure(bg="#1f7a5a"))
+        ask.bind("<Enter>", lambda e: ask.configure(bg="#36456a"))
+        ask.bind("<Leave>", lambda e: ask.configure(bg="#2a3550"))
         no.bind("<Enter>", lambda e: no.configure(bg="#4a4b55"))
         no.bind("<Leave>", lambda e: no.configure(bg="#3a3b42"))
         ok.bind("<Button-1>", lambda e: self._confirm())
+        ask.bind("<Button-1>", lambda e: self._ask_ai())
         no.bind("<Button-1>", lambda e: self._cancel())
         panel.bind("<Escape>", lambda e: self._cancel())
         panel.update_idletasks()
@@ -1134,7 +1196,7 @@ class CaptureOverlay:
         panel.deiconify()
         panel.lift()
         self.confirm_top = panel
-        self.canvas.itemconfigure(self.hint, text="确认框选区域：✓ 翻译    × 取消")
+        self.canvas.itemconfigure(self.hint, text="确认框选区域：✓ 翻译    ✨ 问 AI    × 取消")
         self.canvas.itemconfigure(self.size_label, text="")
 
     def _destroy_confirm(self):
@@ -1155,6 +1217,37 @@ class CaptureOverlay:
     def _cancel(self):
         self.pending = None
         self._finish(None)
+
+    def _ask_ai(self):
+        if self.pending is None:
+            return
+        rect = self.pending
+        self.pending = None
+        if self.request is not None:
+            self.app.respond(self.request, ok=False, error="asked-ai")
+            self.request = None
+        self._finish_for_ask(rect)
+
+    def _finish_for_ask(self, local):
+        if self.finished:
+            return
+        self.finished = True
+        self._destroy_confirm()
+        vx, vy, vw, vh = self.origin
+        self.top.withdraw()
+        self.top.update()
+        self.app.root.update()
+        left, top, right, bottom = local
+        left = max(0, min(vw - 1, left))
+        top = max(0, min(vh - 1, top))
+        right = max(left + 1, min(vw, right))
+        bottom = max(top + 1, min(vh, bottom))
+        time.sleep(0.10)
+        path = self.app.grab((vx + left, vy + top, vx + right, vy + bottom))
+        if path is not None:
+            AskWindow(self.app, path, {"x": vx + left, "y": vy + top,
+                                       "w": right - left, "h": bottom - top})
+        self._destroy()
 
     def _finish(self, local):
         if self.finished:
@@ -1198,11 +1291,139 @@ class CaptureOverlay:
         self.app.overlay = None
 
 
+# ---------------------------------------------------------------- 问 AI 对话
+class AskWindow:
+    """框选后「问 AI」：保留截图，和模型围绕这张图对话。"""
+
+    def __init__(self, app, path, rect):
+        self.app = app
+        self.path = path
+        self.rect = rect or {}
+        self.history = []
+        self.pending = False
+
+        self.top = tk.Toplevel(app.root)
+        self.top.title("问 AI · 截图")
+        self.top.attributes("-topmost", True)
+        self.top.configure(bg=CARD)
+        self.top.minsize(460, 460)
+        w, h = 580, 640
+        vx, vy, vw, vh = monitor_work_area_at(
+            int(self.rect.get("x", 0)) + 40, int(self.rect.get("y", 0)) + 40)
+        x = min(max(vx + 16, int(self.rect.get("x", 0)) + int(self.rect.get("w", 0)) + 16),
+                vx + vw - w - 16)
+        y = min(max(vy + 16, int(self.rect.get("y", 0))), vy + vh - h - 16)
+        self.top.geometry("%dx%d+%d+%d" % (w, h, x, y))
+
+        head = tk.Frame(self.top, bg=CARD)
+        head.pack(fill="x", padx=12, pady=(10, 4))
+        tk.Label(head, text="问 AI · 截图区域", bg=CARD, fg=TEXT,
+                 font=(FONT_FAMILY, 11, "bold")).pack(side="left")
+        close = tk.Label(head, text="×", bg=CARD, fg=MUTED, padx=8, cursor="hand2",
+                         font=(FONT_FAMILY, 12))
+        close.pack(side="right")
+        close.bind("<Button-1>", lambda e: self.close())
+        close.bind("<Enter>", lambda e: close.configure(fg=TEXT))
+        close.bind("<Leave>", lambda e: close.configure(fg=MUTED))
+
+        try:
+            preview = Image.open(path)
+            preview.thumbnail((520, 210))
+            self.photo = ImageTk.PhotoImage(preview)
+            holder = tk.Frame(self.top, bg=BORDER)
+            holder.pack(padx=12, pady=4, fill="x")
+            tk.Label(holder, image=self.photo, bg=CARD,
+                     bd=0).pack(padx=1, pady=1)
+        except Exception:
+            self.photo = None
+
+        body = tk.Frame(self.top, bg=CARD)
+        body.pack(fill="both", expand=True, padx=12, pady=(4, 4))
+        self.log = tk.Text(body, bg="#15161b", fg=TEXT, bd=0, wrap="word",
+                           highlightthickness=1, highlightbackground=BORDER,
+                           font=(FONT_FAMILY, 9), padx=8, pady=6)
+        scroll = tk.Scrollbar(body, command=self.log.yview)
+        scroll.configure(bg=CARD, troughcolor=CARD)
+        self.log.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        self.log.pack(side="left", fill="both", expand=True)
+        self.log.tag_configure("me", foreground="#9ec1ff")
+        self.log.tag_configure("ai", foreground="#dfe6ff")
+        self.log.tag_configure("hint", foreground=MUTED)
+        self.log.insert("end", "输入问题，AI 会读取这张截图回答。\n\n", "hint")
+        self.log.configure(state="disabled")
+
+        bar = tk.Frame(self.top, bg=CARD)
+        bar.pack(fill="x", padx=12, pady=(2, 12))
+        self.entry = tk.Entry(bar, bg="#15161b", fg=TEXT, insertbackground=TEXT,
+                              bd=0, highlightthickness=1, highlightbackground=BORDER,
+                              font=(FONT_FAMILY, 10))
+        self.entry.pack(side="left", fill="x", expand=True, ipady=5)
+        send = tk.Label(bar, text="发送", bg=ACCENT, fg="#ffffff", padx=14, pady=6,
+                        cursor="hand2", font=(FONT_FAMILY, 9))
+        send.pack(side="left", padx=(8, 0))
+        send.bind("<Button-1>", lambda e: self._send())
+        send.bind("<Enter>", lambda e: send.configure(bg="#4a68e0"))
+        send.bind("<Leave>", lambda e: send.configure(bg=ACCENT))
+        self.entry.bind("<Return>", lambda e: self._send())
+        self.entry.focus_set()
+        try:
+            self.top.focus_force()
+        except Exception:
+            pass
+        self.top.after(180, self._focus)
+        self.top.bind("<Escape>", lambda e: self.close())
+        self.top.protocol("WM_DELETE_WINDOW", self.close)
+
+    def _focus(self):
+        try:
+            self.top.lift()
+            self.top.focus_force()
+            self.entry.focus_force()
+        except Exception:
+            pass
+
+    def _append(self, who, text):
+        self.log.configure(state="normal")
+        self.log.insert("end", "%s：%s\n\n" % (who, text), "me" if who == "你" else "ai")
+        self.log.see("end")
+        self.log.configure(state="disabled")
+
+    def _send(self):
+        if self.pending:
+            return
+        question = self.entry.get().strip()
+        if not question:
+            return
+        self.entry.delete(0, "end")
+        self._append("你", question)
+        prior = list(self.history)
+        self.history.append({"role": "user", "content": question})
+        self.pending = True
+        self._append("AI", "正在读图…")
+        self.app.ask(self.path, question, prior, self._on_answer)
+
+    def _on_answer(self, ok, text):
+        self.pending = False
+        if ok:
+            self._append("AI", text)
+            self.history.append({"role": "assistant", "content": text})
+        else:
+            self._append("AI", "出错了：%s" % text)
+
+    def close(self):
+        try:
+            self.top.destroy()
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------- 桌面浮标
 class DesktopPill:
     def __init__(self, app):
         self.app = app
         self.dragged = False
+        self._armed = False
         self.top = tk.Toplevel(app.root)
         self.top.overrideredirect(True)
         self.top.attributes("-topmost", True)
@@ -1234,16 +1455,22 @@ class DesktopPill:
         self.canvas.bind("<Button-3>", self._menu)
 
     def _press(self, event):
+        self._armed = True
         self.dragged = False
         self._start = (event.x_root, event.y_root, self.top.winfo_x(), self.top.winfo_y())
 
     def _move(self, event):
+        if not self._armed:
+            return
         sx, sy, wx, wy = self._start
         if abs(event.x_root - sx) + abs(event.y_root - sy) > 4:
             self.dragged = True
         self.top.geometry("+%d+%d" % (wx + event.x_root - sx, wy + event.y_root - sy))
 
     def _release(self, event):
+        if not self._armed:
+            return
+        self._armed = False
         if self.dragged:
             save_json("pill.json", {"x": self.top.winfo_x(), "y": self.top.winfo_y()})
         else:
@@ -1340,6 +1567,8 @@ class App:
         self.tmpdir = os.path.join(tempfile.gettempdir(), "dsh-translate-pin")
         os.makedirs(self.tmpdir, exist_ok=True)
         self.capture_seq = 0
+        self.asks = {}
+        self.ask_seq = 0
 
     @staticmethod
     def _acquire_single_instance():
@@ -1361,6 +1590,13 @@ class App:
 
     def emit(self, payload):
         self._write(payload)
+
+    def ask(self, path, question, history, callback):
+        self.ask_seq += 1
+        key = "ask-%d" % self.ask_seq
+        self.asks[key] = callback
+        self._write({"id": key, "cmd": "ask", "path": path,
+                     "question": question, "history": history})
 
     def _write(self, data):
         try:
@@ -1507,6 +1743,12 @@ class App:
             except Exception:
                 log("bad json: %r" % line[:200])
                 continue
+            if request.get("id") in self.asks and ("answer" in request or "error" in request):
+                callback = self.asks.pop(request["id"])
+                ok = bool(request.get("ok"))
+                text = request.get("answer") if ok else request.get("error", "请求失败")
+                self.root.after(0, lambda cb=callback, ok=ok, text=text: cb(ok, text))
+                continue
             self.root.after(0, lambda r=request: self.handle(r))
         try:
             self.root.after(0, self.root.quit)
@@ -1516,6 +1758,7 @@ class App:
 
 if __name__ == "__main__":
     App().run()
+
 
 
 
