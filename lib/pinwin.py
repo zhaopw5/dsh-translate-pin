@@ -860,7 +860,7 @@ class InPlaceWindow:
         heights = sorted(r[3] - r[1] for r in rects)
         base_h = heights[len(heights) // 2]
         pitch = block_h / max(1, len(rects) - 1)
-        limit = int(min(base_h * 0.95, pitch * 0.85 if len(rects) > 1 else block_h * 0.85))
+        limit = int(min(base_h * 0.95, pitch * 0.66 if len(rects) > 1 else block_h * 0.85))
         limit = max(7, min(40, limit))
         bold_path = None
         if font_path:
@@ -874,7 +874,7 @@ class InPlaceWindow:
                 font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
             except Exception:
                 font = ImageFont.load_default()
-            spacing = max(1, int(size * 0.18))
+            spacing = max(2, int(size * 0.45))
             wrapped = self._wrap(painter, translated, font, block_w) if translated else []
             if not wrapped:
                 chosen = (size, font, [], spacing)
@@ -882,7 +882,10 @@ class InPlaceWindow:
             total = len(wrapped) * size + (len(wrapped) - 1) * spacing
             widest = max(painter.textlength(line, font=font) for line in wrapped)
             # 让译文行数不超过原文行数，这样每一行都能落在原始行的位置上。
-            if len(wrapped) <= len(rects) and widest <= block_w:
+            fits = len(wrapped) <= len(rects) and widest <= block_w
+            if len(wrapped) < len(rects) and total > block_h - 2:
+                fits = False
+            if fits:
                 chosen = (size, font, wrapped, spacing)
                 break
         if chosen is None:
@@ -1781,6 +1784,7 @@ class App:
 
 if __name__ == "__main__":
     App().run()
+
 
 
 
