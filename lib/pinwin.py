@@ -910,13 +910,8 @@ class InPlaceWindow:
             style = styles[k]
             x = block_left
             y = block_top + j * (size + spacing)
-            use_font = font
-            if style.get("bold") and bold_path:
-                try:
-                    use_font = ImageFont.truetype(bold_path, size)
-                except Exception:
-                    use_font = font
-            painter.text((x, y), line, font=use_font, fill=style["fg"])
+            # 统一使用正常字重，不跟随原文加粗。
+            painter.text((x, y), line, font=font, fill=style["fg"])
 
         return base, self.crop.copy(), base.height
 
