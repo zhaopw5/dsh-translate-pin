@@ -895,8 +895,15 @@ class InPlaceWindow:
             chosen = (size, font, wrapped, spacing)
         size, font, wrapped, spacing = chosen
 
+        count = len(rects)
+        total_lines = len(wrapped)
         for j, line in enumerate(wrapped):
-            k = min(j, len(rects) - 1)
+            # 按垂直位置比例映射到原始行，避免译文行数与原文不同时颜色整体串位。
+            if total_lines > 1:
+                k = int(round(j * (count - 1) / (total_lines - 1)))
+            else:
+                k = 0
+            k = max(0, min(count - 1, k))
             style = styles[k]
             x = block_left
             y = block_top + j * (size + spacing)
