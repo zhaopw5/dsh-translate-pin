@@ -516,7 +516,7 @@ class InPlaceWindow:
 
         self.bg, self.fg = self._sample_colors(self.crop)
         raw_lines = payload.get("lines") or []
-        line_mode = bool(raw_lines) and all(
+        line_mode = bool(raw_lines) and any(
             isinstance(item, dict) and str(item.get("translated") or "").strip()
             for item in raw_lines)
         if line_mode:
