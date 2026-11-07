@@ -28,6 +28,7 @@ Selection and screenshot translation for DeepSeek Harness (Windows): DeepSeek vi
 | DeepSeek Harness | 桌面端或 `dsh web` 均可（需要 Connection / WebServer 服务） |
 | Python 3.10+（含 tkinter、Pillow） | DSH 桌面端自带 Python 运行时，带 tkinter 与 Pillow，无需另装 |
 | Windows PowerShell 5.1 | 系统自带（`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`） |
+| RapidOCR（可选，推荐） | 用 DSH 自带 Python 安装：`python -m pip install rapidocr_onnxruntime`；未安装时自动回退 Windows OCR |
 | 中文 OCR 语言包 | Windows 设置 → 时间和语言 → 语言 → 中文(简体) 的“光学字符识别”可选功能；`en-US` 同理 |
 
 插件启动时会自动在 `$DSH_HOME/dsh-runtimes/*/dependencies/python/pythonw.exe`、`C:\Python3xx\pythonw.exe` 中寻找 Python，也可以用环境变量 `DSH_TRANSLATE_PYTHON` 指定。
@@ -181,7 +182,7 @@ dsh-translate-pin/
 - **桌面工具**：`pinwin.py` 子进程在 Host 启动时拉起并常驻，负责浮标、`RegisterHotKey` 全局快捷键、框选和原地译文窗；Host 与它用 stdin/stdout 逐行 JSON 通信。
 - **截图链路**：浮标/快捷键 → 框选确认 → Host 读图翻译（DeepSeek）→ 回传 rect 与译文 → 原地窗盖在原区域。
 - **翻译**：优先用 `ctx.llm` 调用 DSH 当前配置的 DeepSeek 模型（默认 `deepseek-flash`，支持图片输入），让模型直接读截图、并在翻译时纠正 OCR 错字；模型不可用才回退 Bing / Google / MyMemory。
-- **OCR**：只用于获取原文的**行框位置**（布局用）；截图翻译的正文以模型读图结果为准，避免 Windows OCR 把小字/符号读错后带进译文。
+- **OCR**：RapidOCR 负责**版面**（行/单元格框），Windows OCR 的 word 结果负责**文字**（空格、数字、符号）；两者合并后再做段落/表格分块。没装 RapidOCR 时退回 Windows OCR 单引擎。
 
 ---
 
