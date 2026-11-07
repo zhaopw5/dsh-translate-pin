@@ -881,7 +881,8 @@ class InPlaceWindow:
                 break
             total = len(wrapped) * size + (len(wrapped) - 1) * spacing
             widest = max(painter.textlength(line, font=font) for line in wrapped)
-            if total <= block_h - 2 and widest <= block_w:
+            # 让译文行数不超过原文行数，这样每一行都能落在原始行的位置上。
+            if len(wrapped) <= len(rects) and widest <= block_w:
                 chosen = (size, font, wrapped, spacing)
                 break
         if chosen is None:
@@ -897,16 +898,25 @@ class InPlaceWindow:
 
         count = len(rects)
         total_lines = len(wrapped)
+        first_box = rects[0]
+        first_y = first_box[1] + max(0, (first_box[3] - first_box[1] - size) // 2)
         for j, line in enumerate(wrapped):
-            # 按垂直位置比例映射到原始行，避免译文行数与原文不同时颜色整体串位。
-            if total_lines > 1:
-                k = int(round(j * (count - 1) / (total_lines - 1)))
+            if total_lines == count:
+                # 行数一致：逐行落在原文每一行的位置上。
+                k = j
+                x = rects[k][0]
+                y = rects[k][1] + max(0, (rects[k][3] - rects[k][1] - size) // 2)
+            elif total_lines < count:
+                # 译文更短：从原文第一行开始、按正常行距排，不再留出原行距的大空档。
+                k = min(j, count - 1)
+                x = first_box[0]
+                y = first_y + j * (size + spacing)
             else:
-                k = 0
-            k = max(0, min(count - 1, k))
+                # 极长译文兜底：接在最后一行下面。
+                k = count - 1
+                x = rects[k][0]
+                y = rects[k][3] + (j - count + 1) * (size + spacing)
             style = styles[k]
-            x = block_left
-            y = block_top + j * (size + spacing)
             # 统一使用正常字重，不跟随原文加粗。
             painter.text((x, y), line, font=font, fill=style["fg"])
 
