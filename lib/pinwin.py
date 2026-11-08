@@ -370,6 +370,13 @@ class PinWindow:
     def __init__(self, app, payload, index):
         self.app = app
         self.payload = payload
+        light = bool(payload.get("light"))
+        self.c_card = "#ffffff" if light else CARD
+        self.c_hover = "#f3f4f6" if light else CARD_HOVER
+        self.c_border = "#d9dce2" if light else BORDER
+        self.c_text = "#1f2328" if light else TEXT
+        self.c_muted = "#5b6470" if light else MUTED
+        self.c_faint = "#8a93a0" if light else FAINT
         self.closed = False
         self._drag = None
 
@@ -387,7 +394,7 @@ class PinWindow:
         try:
             self.top.wm_attributes("-transparentcolor", TRANSPARENT)
         except Exception:
-            self.top.configure(bg=CARD)
+            self.top.configure(bg=self.c_card)
         self.top.attributes("-topmost", True)
 
         self.f_title = tkfont.Font(family=FONT_FAMILY, size=9, weight="bold")
@@ -425,43 +432,43 @@ class PinWindow:
                                 bg=TRANSPARENT, highlightthickness=0, bd=0)
         self.canvas.pack(fill="both", expand=True)
         self.card = rounded_rect(self.canvas, 1, 1, WIN_W - 1, total_h - 1, 12,
-                                 fill=CARD, outline=BORDER, width=1)
+                                 fill=self.c_card, outline=self.c_border, width=1)
 
-        body = tk.Frame(self.top, bg=CARD)
+        body = tk.Frame(self.top, bg=self.c_card)
         self.body = body
         self.body_item = self.canvas.create_window(PAD, 10, anchor="nw", window=body,
                                                    width=content_w, height=total_h - 20)
 
-        head = tk.Frame(body, bg=CARD, height=header_h)
+        head = tk.Frame(body, bg=self.c_card, height=header_h)
         head.pack(fill="x", side="top")
         title = tk.Label(head, text="截图翻译" if kind == "screenshot" else "划词翻译",
-                         bg=CARD, fg=TEXT, font=self.f_title)
+                         bg=self.c_card, fg=self.c_text, font=self.f_title)
         title.pack(side="left")
         lang = tk.Label(head, text="%s → %s" % (source or "自动", target),
-                        bg=CARD, fg=MUTED, font=self.f_small)
+                        bg=self.c_card, fg=self.c_muted, font=self.f_small)
         lang.pack(side="left", padx=(8, 0))
         if provider:
-            tk.Label(head, text=provider, bg=CARD, fg=FAINT,
+            tk.Label(head, text=provider, bg=self.c_card, fg=self.c_faint,
                      font=self.f_small).pack(side="left", padx=(8, 0))
 
-        close = FlatButton(head, "×", self.close, fg=MUTED, bg=CARD,
+        close = FlatButton(head, "×", self.close, fg=self.c_muted, bg=self.c_card,
                            hover=DANGER, padx=6, pady=0, font=(FONT_FAMILY, 12))
         close.pack(side="right")
         self.pin_btn = FlatButton(head, "📌 置顶", self.toggle_top,
-                                  fg=ACCENT, bg=CARD, padx=6, pady=2)
+                                  fg=ACCENT, bg=self.c_card, padx=6, pady=2)
         self.pin_btn.pack(side="right", padx=(0, 4))
 
         for widget in (head, title, lang, close, self.pin_btn):
             widget.bind("<Button-1>", self._drag_start, add="+")
             widget.bind("<B1-Motion>", self._drag_move, add="+")
 
-        tk.Frame(body, bg=BORDER, height=1).pack(fill="x", pady=(6, 8))
+        tk.Frame(body, bg=self.c_border, height=1).pack(fill="x", pady=(6, 8))
 
         self.text = tk.Text(body, wrap="word", height=max(3, body_lines),
-                            bg=CARD, fg=TEXT, bd=0, highlightthickness=0,
+                            bg=self.c_card, fg=self.c_text, bd=0, highlightthickness=0,
                             font=self.f_body, cursor="arrow", padx=0, pady=0,
                             spacing1=2, spacing3=4, insertwidth=0,
-                            selectbackground="#3a4a86", selectforeground=TEXT)
+                            selectbackground="#3a4a86", selectforeground=self.c_text)
         self.text.pack(fill="x")
         self.text.insert("1.0", translated)
         self.text.configure(state="disabled")
@@ -471,10 +478,10 @@ class PinWindow:
         self.orig_frame = None
         self.orig_btn = None
         if original:
-            self.orig_frame = tk.Frame(body, bg=CARD)
-            tk.Frame(self.orig_frame, bg=BORDER, height=1).pack(fill="x", pady=(10, 8))
+            self.orig_frame = tk.Frame(body, bg=self.c_card)
+            tk.Frame(self.orig_frame, bg=self.c_border, height=1).pack(fill="x", pady=(10, 8))
             self.orig_text = tk.Text(self.orig_frame, wrap="word", height=4,
-                                     bg=CARD, fg=MUTED, bd=0, highlightthickness=0,
+                                     bg=self.c_card, fg=self.c_muted, bd=0, highlightthickness=0,
                                      font=self.f_small, cursor="arrow", padx=0, pady=0,
                                      spacing1=1, spacing3=2,
                                      selectbackground="#3a4a86")
@@ -483,16 +490,16 @@ class PinWindow:
             self.orig_text.configure(state="disabled")
             self.orig_text.bind("<MouseWheel>", self._on_wheel)
 
-        foot = tk.Frame(body, bg=CARD)
+        foot = tk.Frame(body, bg=self.c_card)
         foot.pack(fill="x", side="bottom", pady=(8, 0))
-        self.copy_btn = FlatButton(foot, "复制译文", self.copy, fg=TEXT, bg=CARD,
-                                   hover=CARD_HOVER, padx=10, pady=4)
+        self.copy_btn = FlatButton(foot, "复制译文", self.copy, fg=self.c_text, bg=self.c_card,
+                                   hover=self.c_hover, padx=10, pady=4)
         self.copy_btn.pack(side="left")
         if original:
             self.orig_btn = FlatButton(foot, "显示原文", self.toggle_original,
-                                       fg=MUTED, bg=CARD, padx=8, pady=4)
+                                       fg=self.c_muted, bg=self.c_card, padx=8, pady=4)
             self.orig_btn.pack(side="left", padx=(6, 0))
-        self.hint = tk.Label(foot, text="可拖动 · 始终置顶", bg=CARD, fg=FAINT,
+        self.hint = tk.Label(foot, text="可拖动 · 始终置顶", bg=self.c_card, fg=self.c_faint,
                              font=self.f_small)
         self.hint.pack(side="right")
 
@@ -512,10 +519,18 @@ class PinWindow:
         self.base_total = total
         x = self.top.winfo_x()
         vx, vy, vw, vh = self.work
-        y = vy + 96 + (self.index % 7) * 34
-        if y + total > vy + vh - 10:
-            y = vy + vh - total - 10
-        y = max(vy + 8, y)
+        near = self.payload.get("near")
+        if isinstance(near, dict):
+            try:
+                y = int(near.get("y", 0)) + 18
+            except Exception:
+                y = vy + 96
+            y = max(vy + 8, min(y, vy + vh - total - 8))
+        else:
+            y = vy + 96 + (self.index % 7) * 34
+            if y + total > vy + vh - 10:
+                y = vy + vh - total - 10
+            y = max(vy + 8, y)
         self.top.geometry("%dx%d+%d+%d" % (WIN_W, total, x, y))
         self._resize(total)
 
@@ -580,7 +595,7 @@ class PinWindow:
             self.top.clipboard_clear()
             self.top.clipboard_append(text)
             self.hint.configure(text="已复制 ✓", fg=ACCENT)
-            self.top.after(1400, lambda: self.hint.configure(text="可拖动 · 始终置顶", fg=FAINT))
+            self.top.after(1400, lambda: self.hint.configure(text="可拖动 · 始终置顶", fg=self.c_faint))
         except Exception:
             pass
 
@@ -610,7 +625,7 @@ class PinWindow:
         topmost = bool(self.top.attributes("-topmost"))
         self.top.attributes("-topmost", not topmost)
         self.pin_btn.set_text("📌 已取消" if topmost else "📌 置顶")
-        self.pin_btn.configure(fg=MUTED if topmost else ACCENT)
+        self.pin_btn.configure(fg=self.c_muted if topmost else ACCENT)
 
     def close(self):
         if self.closed:
