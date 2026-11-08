@@ -92,6 +92,31 @@ MOD_CONTROL = 0x0002
 MOD_SHIFT = 0x0004
 MOD_NOREPEAT = 0x4000
 VK_S = 0x53
+VK_T = 0x54
+
+
+class POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class MSLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("pt", POINT),
+        ("mouseData", ctypes.c_ulong),
+        ("flags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
+
+user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
+user32.GetClipboardData.restype = ctypes.c_void_p
+user32.SetClipboardData.restype = ctypes.c_void_p
+user32.SetWindowsHookExW.restype = ctypes.c_void_p
+user32.CallNextHookEx.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_size_t, ctypes.c_ssize_t]
+user32.CallNextHookEx.restype = ctypes.c_ssize_t
+kernel32.GlobalLock.restype = ctypes.c_void_p
+kernel32.GlobalAlloc.restype = ctypes.c_void_p
 
 
 def log(msg):
@@ -167,6 +192,110 @@ def monitor_work_area_at_window():
     except Exception:
         pass
     return monitor_work_area_at(*cursor_pos())
+
+
+def foreground_pid():
+    try:
+        hwnd = user32.GetForegroundWindow()
+        pid = ctypes.wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return int(pid.value)
+    except Exception:
+        return 0
+
+
+def process_image_name(pid):
+    try:
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not handle:
+            return ""
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            size = ctypes.wintypes.DWORD(1024)
+            if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                return buf.value or ""
+            return ""
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:
+        return ""
+
+
+CF_UNICODETEXT = 13
+GMEM_MOVEABLE = 0x0002
+
+
+def clipboard_get_text():
+    try:
+        opened = False
+        for _ in range(6):
+            if user32.OpenClipboard(None):
+                opened = True
+                break
+            time.sleep(0.05)
+        if not opened:
+            return ""
+        try:
+            handle = user32.GetClipboardData(CF_UNICODETEXT)
+            if not handle:
+                return ""
+            ptr = kernel32.GlobalLock(ctypes.c_void_p(handle))
+            if not ptr:
+                return ""
+            try:
+                return ctypes.cast(ctypes.c_void_p(ptr), ctypes.c_wchar_p).value or ""
+            finally:
+                kernel32.GlobalUnlock(ctypes.c_void_p(handle))
+        finally:
+            user32.CloseClipboard()
+    except Exception:
+        return ""
+
+
+def clipboard_set_text(text):
+    try:
+        data = str(text).encode("utf-16-le") + b"\x00\x00"
+        if not user32.OpenClipboard(None):
+            return
+        try:
+            user32.EmptyClipboard()
+            handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+            if not handle:
+                return
+            ptr = kernel32.GlobalLock(ctypes.c_void_p(handle))
+            if not ptr:
+                return
+            try:
+                ctypes.memmove(ptr, data, len(data))
+            finally:
+                kernel32.GlobalUnlock(ctypes.c_void_p(handle))
+            user32.SetClipboardData(CF_UNICODETEXT, handle)
+        finally:
+            user32.CloseClipboard()
+    except Exception:
+        pass
+
+
+def capture_selection():
+    """复制当前前台窗口的选区；读不到返回空串，并尽量恢复剪贴板文本。"""
+    saved = clipboard_get_text()
+    try:
+        clipboard_set_text("")
+        user32.keybd_event(0x11, 0, 0, 0)          # Ctrl down
+        user32.keybd_event(0x43, 0, 0, 0)          # C down
+        user32.keybd_event(0x43, 0, 0x0002, 0)     # C up
+        user32.keybd_event(0x11, 0, 0x0002, 0)     # Ctrl up
+        time.sleep(0.14)
+        text = clipboard_get_text().strip()
+    except Exception:
+        text = ""
+    finally:
+        try:
+            clipboard_set_text(saved)
+        except Exception:
+            pass
+    return text
 
 
 def rounded_rect(canvas, x1, y1, x2, y2, radius, **kwargs):
@@ -280,6 +409,15 @@ class PinWindow:
         if y + total_h > vy + vh - 10:
             y = vy + vh - total_h - 10
         x = max(vx + 8, x)
+        near = payload.get("near")
+        if isinstance(near, dict):
+            try:
+                x = int(near.get("x", x)) + 14
+                y = int(near.get("y", y)) + 18
+            except Exception:
+                pass
+            x = max(vx + 8, min(x, vx + vw - WIN_W - 8))
+            y = max(vy + 8, min(y, vy + vh - total_h - 8))
 
         self.top.geometry("%dx%d+%d+%d" % (WIN_W, total_h, x, y))
         self.base_total = total_h
@@ -1743,28 +1881,123 @@ class Hotkey:
     def _run(self):
         try:
             user32 = ctypes.windll.user32
-            ok = user32.RegisterHotKey(None, 1, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_S)
-            if not ok:
-                log("RegisterHotKey(Ctrl+Shift+S) failed")
+            ok_s = user32.RegisterHotKey(None, 1, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_S)
+            ok_t = user32.RegisterHotKey(None, 2, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_T)
+            if not ok_s and not ok_t:
+                log("RegisterHotKey failed")
                 return
             self.active = True
             self.app.hotkey_active = True
-            log("hotkey registered: Ctrl+Shift+S")
+            log("hotkey registered: Ctrl+Shift+S / Ctrl+Shift+T")
             msg = ctypes.wintypes.MSG()
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
-                if msg.message == WM_HOTKEY and msg.wParam == 1:
-                    self.queue.put("capture")
-            user32.UnregisterHotKey(None, 1)
+                if msg.message == WM_HOTKEY:
+                    if msg.wParam == 1:
+                        self.queue.put("capture")
+                    elif msg.wParam == 2:
+                        self.queue.put("translate_selection")
+            if ok_s:
+                user32.UnregisterHotKey(None, 1)
+            if ok_t:
+                user32.UnregisterHotKey(None, 2)
         except Exception:
             log(traceback.format_exc())
 
     def poll(self):
         try:
             while True:
-                self.queue.get_nowait()
-                self.app.start_capture("hotkey")
+                action = self.queue.get_nowait()
+                if action == "translate_selection":
+                    self.app.translate_selection_hotkey()
+                else:
+                    self.app.start_capture("hotkey")
         except queue.Empty:
             pass
+
+
+class SelectionWatcher:
+    """全局鼠标钩子：左键松开后尝试读取选区，用于在外部应用里弹出「译」。"""
+
+    def __init__(self, app):
+        self.app = app
+        self.queue = queue.Queue()
+        self.running = True
+        self._down = None
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        try:
+            hookproc = ctypes.WINFUNCTYPE(
+                ctypes.c_ssize_t, ctypes.c_int, ctypes.c_size_t, ctypes.c_ssize_t)
+            self._proc = hookproc(self._hook)
+            self._handle = user32.SetWindowsHookExW(14, self._proc, None, 0)
+            if not self._handle:
+                log("selection mouse hook failed")
+                return
+            msg = ctypes.wintypes.MSG()
+            while self.running and user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+        except Exception:
+            log(traceback.format_exc())
+
+    def _hook(self, n_code, w_param, l_param):
+        if n_code == 0:
+            try:
+                data = ctypes.cast(ctypes.c_void_p(l_param), ctypes.POINTER(MSLLHOOKSTRUCT)).contents
+                x = int(data.pt.x)
+                y = int(data.pt.y)
+                if w_param == 0x0201:  # WM_LBUTTONDOWN
+                    self._down = (x, y)
+                elif w_param == 0x0202:  # WM_LBUTTONUP
+                    start = self._down
+                    self._down = None
+                    # 只有拖动/划选才尝试复制；单击不触发。
+                    if start and abs(x - start[0]) + abs(y - start[1]) >= 6:
+                        self.queue.put((x, y))
+            except Exception:
+                pass
+        return user32.CallNextHookEx(None, n_code, w_param, l_param)
+
+
+class SelectionPill:
+    """选字后浮在光标旁的小「译」按钮。"""
+
+    def __init__(self, app, text, x, y):
+        self.app = app
+        self.text = text
+        self.origin = (x, y)
+        self.top = tk.Toplevel(app.root)
+        self.top.overrideredirect(True)
+        self.top.attributes("-topmost", True)
+        self.top.configure(bg=TRANSPARENT)
+        try:
+            self.top.wm_attributes("-transparentcolor", TRANSPARENT)
+        except Exception:
+            pass
+        vx, vy, vw, vh = monitor_work_area_at(x, y)
+        px = min(max(vx + 4, x + 10), vx + vw - 36)
+        py = min(max(vy + 4, y + 8), vy + vh - 36)
+        self.top.geometry("32x32+%d+%d" % (px, py))
+        self.canvas = tk.Canvas(self.top, width=32, height=32, bg=TRANSPARENT,
+                                highlightthickness=0, bd=0, cursor="hand2")
+        self.canvas.pack()
+        self.circle = self.canvas.create_oval(1, 1, 31, 31, fill=CARD,
+                                              outline=ACCENT, width=1)
+        self.canvas.create_text(16, 16, text="译", fill=TEXT,
+                                font=(FONT_FAMILY, 11, "bold"))
+        self.canvas.bind("<Enter>", lambda e: self.canvas.itemconfigure(self.circle, fill=CARD_HOVER))
+        self.canvas.bind("<Leave>", lambda e: self.canvas.itemconfigure(self.circle, fill=CARD))
+        self.canvas.bind("<Button-1>", lambda e: app.translate_selection_text(self.text, x, y))
+        self.top.after(5000, self.close)
+
+    def close(self):
+        try:
+            self.top.destroy()
+        except Exception:
+            pass
+        if self.app.sel_pill is self:
+            self.app.sel_pill = None
 
 
 # ---------------------------------------------------------------- 应用
@@ -1787,6 +2020,8 @@ class App:
         self.capture_seq = 0
         self.asks = {}
         self.ask_seq = 0
+        self.sel_pill = None
+        self.watcher = None
 
     @staticmethod
     def _acquire_single_instance():
@@ -1944,7 +2179,65 @@ class App:
                 log(traceback.format_exc())
             self.hotkey = Hotkey(self)
             self.root.after(150, self._poll_hotkey)
+            try:
+                self.watcher = SelectionWatcher(self)
+                self.root.after(150, self._poll_selection)
+            except Exception:
+                log(traceback.format_exc())
         self.root.mainloop()
+
+    def _is_own_or_dsh(self):
+        pid = foreground_pid()
+        if not pid:
+            return True
+        if pid == os.getpid():
+            return True
+        name = process_image_name(pid).lower()
+        return "deepseek" in name or "harness" in name
+
+    def translate_selection_text(self, text, x, y):
+        if self.sel_pill is not None:
+            self.sel_pill.close()
+            self.sel_pill = None
+        text = (text or "").strip()
+        if not text:
+            return
+        self.emit({"event": "selection", "text": text, "x": int(x), "y": int(y),
+                   "source": "global"})
+
+    def translate_selection_hotkey(self):
+        # 全局热键是自己注册的，即使在 DSH 里按下也收不到页面事件；
+        # 这里统一走“复制选区 → 宿主翻译 → 桌面卡片”，保证热键始终有反馈。
+        if foreground_pid() == os.getpid():
+            return
+        text = capture_selection()
+        if not text:
+            Toast(self, "没有检测到选中的文字", cursor_pos())
+            return
+        x, y = cursor_pos()
+        self.translate_selection_text(text, x, y)
+
+    def maybe_selection(self, x, y):
+        if self._is_own_or_dsh():
+            return
+        text = capture_selection()
+        if not text or len(text) > 4000:
+            return
+        if not any(ch.isalpha() or "\u4e00" <= ch <= "\u9fff" for ch in text):
+            return
+        if self.sel_pill is not None:
+            self.sel_pill.close()
+        self.sel_pill = SelectionPill(self, text, x, y)
+
+    def _poll_selection(self):
+        if self.watcher is not None:
+            try:
+                while True:
+                    x, y = self.watcher.queue.get_nowait()
+                    self.root.after(180, lambda x=x, y=y: self.maybe_selection(x, y))
+            except queue.Empty:
+                pass
+        self.root.after(120, self._poll_selection)
 
     def _poll_hotkey(self):
         if self.hotkey:
