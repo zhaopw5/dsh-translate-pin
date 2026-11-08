@@ -373,7 +373,7 @@ class PinWindow:
         light = bool(payload.get("light"))
         self.c_card = "#ffffff" if light else CARD
         self.c_hover = "#f3f4f6" if light else CARD_HOVER
-        self.c_border = "#ccd3df" if light else BORDER
+        self.c_border = "#c2cad8" if light else BORDER
         self.c_text = "#1f2328" if light else TEXT
         self.c_muted = "#5b6470" if light else MUTED
         self.c_faint = "#8a93a0" if light else FAINT
@@ -431,9 +431,14 @@ class PinWindow:
         self.canvas = tk.Canvas(self.top, width=WIN_W, height=total_h,
                                 bg=TRANSPARENT, highlightthickness=0, bd=0)
         self.canvas.pack(fill="both", expand=True)
-        self.card = rounded_rect(self.canvas, 1, 1, WIN_W - 1, total_h - 1, 12,
-                                 fill=self.c_card, outline=self.c_border,
-                                 width=2 if light else 1)
+        if light:
+            # 浅色卡片用普通矩形边框，避免圆角 smooth 多边形在左上角留下斜线。
+            self.card = self.canvas.create_rectangle(
+                1, 1, WIN_W - 1, total_h - 1,
+                fill=self.c_card, outline=self.c_border, width=2)
+        else:
+            self.card = rounded_rect(self.canvas, 1, 1, WIN_W - 1, total_h - 1, 12,
+                                     fill=self.c_card, outline=self.c_border, width=1)
 
         body = tk.Frame(self.top, bg=self.c_card)
         self.body = body
