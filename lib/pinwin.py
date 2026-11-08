@@ -1970,12 +1970,15 @@ class SelectionWatcher:
                 y = int(data.pt.y)
                 if w_param == 0x0201:  # WM_LBUTTONDOWN
                     self._down = (x, y)
+                    self.queue.put(("down", x, y))
+                elif w_param in (0x0204, 0x0207):  # 右键 / 中键按下
+                    self.queue.put(("down", x, y))
                 elif w_param == 0x0202:  # WM_LBUTTONUP
                     start = self._down
                     self._down = None
                     # 只有拖动/划选才尝试复制；单击不触发。
                     if start and abs(x - start[0]) + abs(y - start[1]) >= 6:
-                        self.queue.put((x, y))
+                        self.queue.put(("drag", x, y))
             except Exception:
                 pass
         return user32.CallNextHookEx(None, n_code, w_param, l_param)
@@ -2011,6 +2014,16 @@ class SelectionPill:
         self.canvas.bind("<Leave>", lambda e: self.canvas.itemconfigure(self.circle, fill=CARD))
         self.canvas.bind("<Button-1>", lambda e: app.translate_selection_text(self.text, x, y))
         self.top.after(5000, self.close)
+
+    def contains(self, x, y):
+        try:
+            px = self.top.winfo_x()
+            py = self.top.winfo_y()
+            pw = self.top.winfo_width()
+            ph = self.top.winfo_height()
+            return px - 2 <= x <= px + pw + 2 and py - 2 <= y <= py + ph + 2
+        except Exception:
+            return False
 
     def close(self):
         try:
@@ -2254,8 +2267,16 @@ class App:
         if self.watcher is not None:
             try:
                 while True:
-                    x, y = self.watcher.queue.get_nowait()
-                    self.root.after(180, lambda x=x, y=y: self.maybe_selection(x, y))
+                    event = self.watcher.queue.get_nowait()
+                    if not isinstance(event, tuple) or len(event) != 3:
+                        continue
+                    kind, x, y = event
+                    if kind == "down":
+                        # 点到别处：立刻收起「译」，不等自动超时。
+                        if self.sel_pill is not None and not self.sel_pill.contains(x, y):
+                            self.sel_pill.close()
+                    elif kind == "drag":
+                        self.root.after(180, lambda x=x, y=y: self.maybe_selection(x, y))
             except queue.Empty:
                 pass
         self.root.after(120, self._poll_selection)
